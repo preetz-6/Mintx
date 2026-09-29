@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mintx</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <header class="popup-header">
+      <div class="logo">
+        <span class="logo-icon">🛡️</span>
+        <h1>Mintx</h1>
+      </div>
+      <span class="status-badge" id="status-badge">Idle</span>
+    </header>
+
+    <div class="task-input-area">
+      <textarea
+        id="task-input"
+        placeholder="Describe what you want to do on this page..."
+        rows="3"
+      ></textarea>
+      <button id="run-btn" class="btn-primary">
+        <span class="btn-icon">▶</span> Run
+      </button>
+    </div>
+
+    <div class="agent-log" id="agent-log">
+      <div class="log-entry log-info">Ready. Describe a task to begin.</div>
+    </div>
+
+    <footer class="popup-footer">
+      <button id="settings-btn" class="btn-ghost">⚙️</button>
+      <span class="version">v0.1.0</span>
+    </footer>
+  </div>
+  <script src="popup.bundle.js"></script>
+</body>
+</html>
