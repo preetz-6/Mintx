@@ -35,9 +35,10 @@ app = FastAPI(
 # CORS — allow extension to talk to us
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in production
+    allow_origins=os.getenv("MINTX_ALLOWED_ORIGINS", "http://localhost:3000").split(","),
+    allow_origin_regex=r"^(chrome-extension://[a-p]{32}|moz-extension://[0-9a-f-]{36})$",
     allow_methods=["POST"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type"],
 )
 
 
@@ -79,4 +80,4 @@ async def plan(context: SanitizedContext):
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host=os.getenv("MINTX_HOST", "127.0.0.1"), port=8000, reload=True)

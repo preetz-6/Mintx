@@ -10,5 +10,8 @@
   },
   "devDependencies": {
     "esbuild": "^0.24.0"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.3.0"
   }
 }

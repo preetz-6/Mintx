@@ -79,13 +79,13 @@ export function detectAndTokenize(rawElements, vault) {
     // Detect PII category for this element
     const category = detectCategory(el);
 
-    if (category && el.current_value) {
+    if (category === 'PASSWORD') {
+      // Passwords are never copied into the vault, even if the field is filled.
+      sanitized.current_value_token = el.current_value ? '[REDACTED]' : null;
+    } else if (category && el.current_value) {
       // Tokenize: store real value in vault, replace with token
       const token = vault.store(category, el.current_value);
       sanitized.current_value_token = `[${token}]`;
-    } else if (category === 'PASSWORD') {
-      // Passwords: ALWAYS redact, even if empty — never send type info that leaks intent
-      sanitized.current_value_token = el.current_value ? '[REDACTED]' : null;
     } else {
       // No PII detected — check value with regex as fallback
       if (el.current_value) {

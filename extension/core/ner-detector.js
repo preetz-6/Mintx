@@ -25,10 +25,8 @@ export async function initNerModel(onProgress) {
   isLoading = true;
 
   try {
-    const { pipeline } = await import(
-      /* webpackIgnore: true */
-      'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3'
-    );
+    const { pipeline, env } = await import('@huggingface/transformers');
+    env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('onnxruntime/');
 
     nerPipeline = await pipeline(
       'token-classification',

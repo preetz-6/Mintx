@@ -6,9 +6,9 @@
  * Can block or escalate actions — never lower risk tier.
  */
 
-// Actions that could cause irreversible state changes
-const HIGH_RISK_ACTIONS = ['submit', 'delete', 'purchase', 'pay', 'confirm'];
-const DANGEROUS_PATTERNS = /delete|remove|cancel|unsubscribe|deactivate|close\s+account/i;
+const ACTION_TYPES = new Set(['click', 'type', 'scroll', 'navigate', 'select', 'wait']);
+const RISK_TIERS = ['low', 'medium', 'high', 'critical'];
+const DANGEROUS_PATTERNS = /delete|remove|cancel|unsubscribe|deactivate|close\s+account|submit|purchase|pay|place\s+order|confirm/i;
 
 export class SafetyRules {
   constructor() {
@@ -22,7 +22,11 @@ export class SafetyRules {
    * @param {Object} action — from ActionPlan
    * @returns {{ blocked: boolean, reason?: string, adjustedRisk?: string }}
    */
-  evaluate(action) {
+  evaluate(action, targetElement = null) {
+    if (!action || !ACTION_TYPES.has(action.type)) {
+      return { blocked: true, reason: 'Unsupported action type' };
+    }
+
     // Rule 1: Never execute JavaScript via action values
     if (action.value && /javascript:/i.test(action.value)) {
       return { blocked: true, reason: 'JavaScript injection detected in action value' };
@@ -30,41 +34,47 @@ export class SafetyRules {
 
     // Rule 2: Never navigate to data: or javascript: URIs
     if (action.type === 'navigate' && action.value) {
-      if (/^(javascript|data|blob):/i.test(action.value)) {
-        return { blocked: true, reason: 'Dangerous navigation URI scheme' };
+      try {
+        const url = new URL(action.value, window.location.href);
+        if (!['http:', 'https:'].includes(url.protocol)) {
+          return { blocked: true, reason: 'Only HTTP(S) navigation is allowed' };
+        }
+      } catch {
+        return { blocked: true, reason: 'Invalid navigation URL' };
       }
     }
 
-    // Rule 3: Escalate risk tier for actions that look destructive
-    if (action.type === 'click') {
-      // Check if target text matches dangerous patterns
-      if (action.target_text && DANGEROUS_PATTERNS.test(action.target_text)) {
-        return {
-          blocked: false,
-          adjustedRisk: 'high',
-          reason: 'Action text matches destructive pattern'
-        };
-      }
-    }
-
-    // Rule 4: Block actions with no target
-    if (!action.target_element_id && action.type !== 'scroll' && action.type !== 'wait') {
+    // Navigation acts on the current tab and therefore has no element target.
+    if (!action.target_element_id && !['scroll', 'wait', 'navigate'].includes(action.type)) {
       return { blocked: true, reason: 'Action has no target element' };
     }
 
-    // Rule 5: Limit the number of consecutive type actions (data exfiltration defense)
-    // (tracked externally if needed)
+    const targetText = [
+      targetElement?.innerText,
+      targetElement?.getAttribute?.('aria-label'),
+      targetElement?.getAttribute?.('title'),
+      targetElement?.value,
+      action.target_text
+    ].filter(Boolean).join(' ').slice(0, 500);
+    const isSubmitControl = targetElement?.type === 'submit' ||
+      targetElement?.getAttribute?.('type') === 'submit';
+    const localRisk = (isSubmitControl || DANGEROUS_PATTERNS.test(targetText)) ? 'high' : 'low';
+    const adjustedRisk = SafetyRules.adjustRisk(action.risk_tier, localRisk);
 
-    return { blocked: false };
+    return {
+      blocked: false,
+      adjustedRisk,
+      requiresConfirmation: ['high', 'critical'].includes(adjustedRisk),
+      reason: localRisk === 'high' ? 'Target appears to perform a consequential action' : undefined
+    };
   }
 
   /**
    * Adjust risk tier — can only go UP, never down.
    */
   static adjustRisk(serverRisk, localRisk) {
-    const tiers = ['low', 'medium', 'high', 'critical'];
-    const serverIdx = tiers.indexOf(serverRisk || 'low');
-    const localIdx = tiers.indexOf(localRisk || 'low');
-    return tiers[Math.max(serverIdx, localIdx)];
+    const serverIdx = RISK_TIERS.indexOf(serverRisk);
+    const localIdx = RISK_TIERS.indexOf(localRisk);
+    return RISK_TIERS[Math.max(serverIdx < 0 ? 0 : serverIdx, localIdx < 0 ? 0 : localIdx)];
   }
 }

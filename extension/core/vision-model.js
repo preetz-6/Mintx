@@ -27,14 +27,10 @@ export async function initVisionModel(onProgress) {
 
   try {
     // Dynamic import — Transformers.js is loaded at runtime
-    const { pipeline, env } = await import(
-      /* webpackIgnore: true */
-      'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3'
-    );
+    const { pipeline, env } = await import('@huggingface/transformers');
 
     // Prefer WebGPU, fall back to WASM
-    env.backends.onnx.wasm.wasmPaths =
-      'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/';
+    env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('onnxruntime/');
 
     // 1. Image captioning — lightweight model for vision summary
     //    ~100MB, runs well in browser
@@ -173,5 +169,5 @@ async function getDevice() {
  * Check if vision models are loaded and ready.
  */
 export function isVisionReady() {
-  return !!captionPipeline;
+  return !!captionPipeline && !!detectionPipeline;
 }

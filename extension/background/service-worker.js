@@ -96,12 +96,16 @@ async function handleTask(userIntent) {
       // Step 2: DOM observation from content script
       const observation = await sendToContentScript(tab.id, {
         type: 'OBSERVE',
-        payload: {}
+        payload: { userIntent }
       });
 
       if (!observation) {
         broadcast('AGENT_LOG', { message: 'No observation returned from page', level: 'error' });
         break;
+      }
+
+      if (!observation.piiScanReady) {
+        throw new Error('Local PII model is unavailable; refusing to send page context.');
       }
 
       // Step 3: Vision processing on screenshot
@@ -113,8 +117,11 @@ async function handleTask(userIntent) {
           broadcast('AGENT_LOG', { message: 'Running vision model...', level: 'info' });
           const aiSummary = await generateVisionSummary(screenshotDataUrl);
           if (aiSummary) {
-            // Combine DOM summary + vision summary
-            visionSummary = `${aiSummary}. DOM context: ${observation.visionSummary}`;
+            const sanitized = await sendToContentScript(tab.id, {
+              type: 'SANITIZE_TEXT',
+              payload: { text: `${aiSummary}. DOM context: ${observation.visionSummary}` }
+            });
+            visionSummary = sanitized?.text || observation.visionSummary;
           }
         }
 
@@ -150,7 +157,7 @@ async function handleTask(userIntent) {
 
       // Step 4: Build sanitized context
       const context = buildSanitizedContext({
-        userIntent,
+        userIntent: observation.sanitizedUserIntent,
         pageDomain: new URL(tab.url).hostname,
         domElements: observation.domElements,
         visionSummary,
@@ -171,6 +178,10 @@ async function handleTask(userIntent) {
       if (!plan || !plan.actions) {
         broadcast('AGENT_LOG', { message: 'Server returned no actions', level: 'warn' });
         break;
+      }
+
+      if (plan.request_id !== context.request_id) {
+        throw new Error('Server returned an action plan for a different request.');
       }
 
       broadcast('AGENT_LOG', {

@@ -73,6 +73,18 @@ export class DataVault {
     return map;
   }
 
+  /** Replace exact locally-held PII values in free text with their tokens. */
+  sanitizeKnownValues(text) {
+    let sanitized = String(text ?? '');
+    const entries = [...this._store.entries()]
+      .sort((a, b) => b[1].length - a[1].length);
+    for (const [token, value] of entries) {
+      if (!value) continue;
+      sanitized = sanitized.split(value).join(`[${token}]`);
+    }
+    return sanitized;
+  }
+
   /**
    * Clear all stored tokens. Call when a task completes.
    */

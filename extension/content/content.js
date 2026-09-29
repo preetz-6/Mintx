@@ -30,8 +30,13 @@ let nerInitAttempted = false;
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'OBSERVE') {
-    handleObserve().then(sendResponse);
+    handleObserve(msg.payload?.userIntent || '').then(sendResponse);
     return true; // async
+  }
+
+  if (msg.type === 'SANITIZE_TEXT') {
+    sanitizeFreeText(msg.payload?.text || '').then(text => sendResponse({ text }));
+    return true;
   }
 
   if (msg.type === 'EXECUTE_ACTION') {
@@ -42,12 +47,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 // ── Observe: Extract DOM + detect PII + tokenize + map regions ──
 
-async function handleObserve() {
+async function handleObserve(userIntent) {
   try {
-    // Lazy-init NER (non-blocking — falls back to regex if not ready)
+    // Initialize NER before preparing any text that may cross the network.
     if (!nerInitAttempted) {
       nerInitAttempted = true;
-      initNerModel().catch(err => {
+      await initNerModel().catch(err => {
         console.warn('[Mintx] NER init failed, using regex-only:', err.message);
       });
     }
@@ -69,8 +74,14 @@ async function handleObserve() {
       }
     }
 
-    // 4. Generate DOM-based vision summary
-    const visionSummary = generateBasicVisionSummary(document);
+    // 4. Sanitize all free text locally before returning it to the worker.
+    const safeElements = await Promise.all(elements.map(async el => ({
+      ...el,
+      label: await sanitizeFreeText(el.label),
+      placeholder: await sanitizeFreeText(el.placeholder)
+    })));
+    const visionSummary = await sanitizeFreeText(generateBasicVisionSummary(document));
+    const sanitizedUserIntent = await sanitizeFreeText(userIntent);
 
     // 5. Map PII elements to screenshot pixel regions for visual redaction
     //    (service worker uses these to redact the screenshot)
@@ -78,10 +89,12 @@ async function handleObserve() {
     const piiRegions = buildPIIRegions(rawElements, elements, dpr);
 
     return {
-      domElements: elements,
+      domElements: safeElements,
       visionSummary,
+      sanitizedUserIntent,
       availableTokens: Object.keys(vault.getTokenMap()),
-      piiRegions
+      piiRegions,
+      piiScanReady: isNerReady()
     };
   } catch (err) {
     console.error('[Mintx] Observe error:', err);
@@ -89,12 +102,38 @@ async function handleObserve() {
   }
 }
 
+async function sanitizeFreeText(text) {
+  if (!text) return '';
+  let result = String(text);
+
+  if (isNerReady()) {
+    try {
+      const findings = await scanTextForPII(result);
+      for (const finding of findings.sort((a, b) => b.start - a.start)) {
+        if (!finding.category || finding.start < 0 || finding.end <= finding.start) continue;
+        const value = result.slice(finding.start, finding.end) || finding.value;
+        if (!value.trim()) continue;
+        const token = vault.store(finding.category, value.trim());
+        result = result.slice(0, finding.start) + `[${token}]` + result.slice(finding.end);
+      }
+    } catch (err) {
+      console.warn('[Mintx] NER text sanitization failed:', err.message);
+    }
+  }
+
+  return vault.sanitizeKnownValues(sanitizeText(result, vault));
+}
+
 // ── Execute: Vet action through safety rules, then execute ──
 
 async function handleExecute(action) {
   try {
     // Safety check
-    const safetyResult = safety.evaluate(action);
+    const targetElement = action.target_element_id
+      ? [...document.querySelectorAll('[data-mintx-id]')]
+          .find(el => el.dataset.mintxId === action.target_element_id) || null
+      : null;
+    const safetyResult = safety.evaluate(action, targetElement);
     if (safetyResult.blocked) {
       return {
         action_id: action.action_id,
@@ -102,6 +141,31 @@ async function handleExecute(action) {
         dom_changed: false,
         error: `Blocked by safety rule: ${safetyResult.reason}`
       };
+    }
+
+    if (action.target_element_id && !targetElement) {
+      return {
+        action_id: action.action_id,
+        status: 'error',
+        dom_changed: false,
+        error: 'Target element is not present on the current page'
+      };
+    }
+
+    if (safetyResult.requiresConfirmation) {
+      const description = targetElement?.innerText?.trim() ||
+        targetElement?.getAttribute('aria-label') || action.type;
+      const accepted = window.confirm(
+        `Mintx is about to perform a ${safetyResult.adjustedRisk}-risk action: ${description}. Continue?`
+      );
+      if (!accepted) {
+        return {
+          action_id: action.action_id,
+          status: 'blocked',
+          dom_changed: false,
+          error: 'User declined the local confirmation'
+        };
+      }
     }
 
     // Execute
@@ -177,7 +241,6 @@ function buildPIIRegions(rawElements, sanitizedElements, dpr) {
 // ── DOM Vision Summary (fallback when ViT not loaded) ──
 
 function generateBasicVisionSummary(doc) {
-  const title = doc.title || 'Untitled page';
   const forms = doc.querySelectorAll('form').length;
   const inputs = doc.querySelectorAll('input, textarea, select').length;
   const buttons = doc.querySelectorAll('button, [type="submit"], [role="button"]').length;
@@ -185,17 +248,13 @@ function generateBasicVisionSummary(doc) {
   const images = doc.querySelectorAll('img').length;
   const headings = doc.querySelectorAll('h1, h2, h3').length;
 
-  const parts = [`Page: "${title}"`];
+  const parts = ['Web page'];
   if (forms > 0) parts.push(`${forms} form(s)`);
   if (inputs > 0) parts.push(`${inputs} input field(s)`);
   if (buttons > 0) parts.push(`${buttons} button(s)`);
   if (links > 0) parts.push(`${links} link(s)`);
   if (images > 0) parts.push(`${images} image(s)`);
   if (headings > 0) parts.push(`${headings} heading(s)`);
-
-  // Add main heading text
-  const h1 = doc.querySelector('h1');
-  if (h1) parts.push(`Main heading: "${h1.textContent.trim().substring(0, 60)}"`);
 
   return parts.join(', ');
 }

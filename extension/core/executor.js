@@ -133,6 +133,9 @@ export class Executor {
     let value = action.value || '';
     if (/^\[.+\]$/.test(value)) {
       value = this.vault.resolve(value) || value;
+      if (/^\[.+\]$/.test(value)) {
+        throw new Error(`Token ${action.value} not found in vault`);
+      }
     }
 
     // Find matching option

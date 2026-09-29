@@ -42,6 +42,15 @@ function copyStatic() {
   fs.copyFileSync(path.join(__dirname, 'popup/popup.html'), path.join(distDir, 'popup/popup.html'));
   fs.copyFileSync(path.join(__dirname, 'popup/popup.css'), path.join(distDir, 'popup/popup.css'));
 
+  // MV3 cannot execute remotely hosted WASM. Ship the ONNX Runtime binaries
+  // with the extension and point Transformers.js at this extension-local path.
+  const ortDist = path.join(__dirname, 'node_modules/onnxruntime-web/dist');
+  const wasmOut = path.join(distDir, 'onnxruntime');
+  fs.mkdirSync(wasmOut, { recursive: true });
+  for (const file of fs.readdirSync(ortDist).filter(name => name.endsWith('.wasm'))) {
+    fs.copyFileSync(path.join(ortDist, file), path.join(wasmOut, file));
+  }
+
   // Patch popup.html to use bundled JS
   let popupHtml = fs.readFileSync(path.join(distDir, 'popup/popup.html'), 'utf-8');
   popupHtml = popupHtml.replace('popup.js" type="module"', 'popup.bundle.js"');
